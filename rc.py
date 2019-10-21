@@ -39,10 +39,12 @@ def points_formula(completion) -> float:
         pgr = 100
         pos = completion.position
         rq = completion.requirement
+    if pos >= 151:
+        return 0.0
     if pgr == 100:
-        return 150 * math.exp((1 - pos) * math.log(1/30) / (-149))
+        return 150.0 * math.exp((1.0 - pos) * math.log(1.0 / 30.0) / (-149.0))
     else:
-        return 150 * math.exp((1 - pos) * math.log(1/30) / (-149)) * (0.25 * (pgr - rq) / (100 - rq) + 0.25)
+        return 150.0 * math.exp((1.0 - pos) * math.log(1.0 / 30.0) / (-149.0)) * (0.25 * (pgr - rq) / (100 - rq) + 0.25)
 
 
 class Player(object):
@@ -63,10 +65,12 @@ class Player(object):
         if len(self.records) > 0:
             c_points = 0
             for record in self.records:
-                c_points += points_formula(record)
+                add_points = points_formula(record)
+                c_points += add_points
             if self.verified:
                 for demon in self.verified:
-                    c_points += points_formula(demon)
+                    add_points = points_formula(demon)
+                    c_points += add_points
             self.points = c_points
 
     def add_record(self, record):  # record: Record
@@ -137,12 +141,22 @@ def pc_to_obj(i_dic: dict, obj_type: str):
         return Record(demon=pc_to_obj(i_dic=i_dic['demon'], obj_type='demon'), progress=int(i_dic['progress']),
                       rid=int(i_dic['id']))
     if obj_type == 'demon':
+        needs_req = False
+        rq = 100
         try:
             rq = i_dic['requirement']
         except KeyError:
-            rq = 100
-        return Demon(pid=int(i_dic['id']), name=i_dic['name'], position=int(i_dic['position']),
-                     requirement=rq)
+            needs_req = True
+        return_demon = Demon(pid=int(i_dic['id']), name=i_dic['name'], position=int(i_dic['position']), requirement=50)
+        if needs_req:
+            req_demon = find_global_obj(i_list=DEMON_LIST.ls, i_obj=return_demon, obj_type='demon', obj_set='object')
+            if req_demon:
+                return_demon.requirement = req_demon.requirement
+            else:
+                return_demon.requirement = 50
+            return return_demon
+        else:
+            return Demon(pid=int(i_dic['id']), name=i_dic['name'], position=int(i_dic['position']), requirement=rq)
     if obj_type == 'player':
         line_pd = i_dic
         if line_pd:
@@ -152,11 +166,7 @@ def pc_to_obj(i_dic: dict, obj_type: str):
             if len(line_pd_records) > 0:
                 o_counter = 0
                 for record in line_pd_records:
-                    pd_demon = pc_to_obj(record['demon'], 'demon')
-                    if pd_demon.requirement == 100:
-                        for d in DEMON_LIST.ls:
-                            if d.pid == pd_demon.pid:
-                                pd_demon.requirement = d.requirement
+                    pd_demon = pc_to_obj(record, 'record')
                     line_pd_records[o_counter] = pd_demon
                     o_counter += 1
             else:
@@ -166,10 +176,6 @@ def pc_to_obj(i_dic: dict, obj_type: str):
                 o_counter = 0
                 for published in line_pd_published:
                     pd_demon = pc_to_obj(published, 'demon')
-                    if pd_demon.requirement == 100:
-                        for d in DEMON_LIST.ls:
-                            if d.pid == pd_demon.pid:
-                                pd_demon.requirement = d.requirement
                     line_pd_published[o_counter] = pd_demon
                     o_counter += 1
             else:
@@ -179,10 +185,6 @@ def pc_to_obj(i_dic: dict, obj_type: str):
                 o_counter = 0
                 for verified in line_pd_verified:
                     pd_demon = pc_to_obj(verified, 'demon')
-                    if pd_demon.requirement == 100:
-                        for d in DEMON_LIST.ls:
-                            if d.pid == pd_demon.pid:
-                                pd_demon.requirement = d.requirement
                     line_pd_verified[o_counter] = pd_demon
                     o_counter += 1
             else:
@@ -192,10 +194,6 @@ def pc_to_obj(i_dic: dict, obj_type: str):
                 o_counter = 0
                 for created in line_pd_created:
                     pd_demon = pc_to_obj(created, 'demon')
-                    if pd_demon.requirement == 100:
-                        for d in DEMON_LIST.ls:
-                            if d.pid == pd_demon.pid:
-                                pd_demon.requirement = d.requirement
                     line_pd_created[o_counter] = pd_demon
                     o_counter += 1
             else:
@@ -214,7 +212,7 @@ def find_global_obj(i_list: list, i_obj, obj_type: str, obj_set: str):
                 return i_obj
             found_obj = None
             for o in i_list:
-                if o.pid == i_obj.pid:
+                if int(o.pid) == int(i_obj.pid):
                     found_obj = o
                 elif o.name.lower() == i_obj.name.lower():
                     found_obj = o
@@ -239,13 +237,13 @@ def object_variables(obj, pr):
 class PCList(object):
     def __init__(self, list_type: str):
         """
-        :param list_type: demon, player
+        :param list_type: demon, player, role
         """
         self.list_type = list_type
         self.ls = []
 
     def get_object_by_obj(self, i_obj):
-        if self.list_type in ['player', 'demon']:
+        if self.list_type in ['player', 'demon', 'role']:
             use_obj_inner = i_obj
             if type(use_obj_inner) is dict:
                 use_obj_inner = pc_to_obj(use_obj_inner, self.list_type)
@@ -271,6 +269,16 @@ class PCList(object):
                 self.ls[self.ls.index(change_obj)] = use_obj
         self.positional_sort()
 
+    def remove_object(self, i_obj):
+        use_obj = i_obj
+        if type(use_obj) is dict:
+            use_obj = pc_to_obj(use_obj, self.list_type)
+        try:
+            self.ls.remove(use_obj)
+        except ValueError:
+            pass
+        self.positional_sort()
+
     def positional_sort(self):
         if self.list_type == 'demon':
             self.ls.sort(key=lambda x: x.position, reverse=False)
@@ -284,6 +292,13 @@ class PCList(object):
 
 class PCRole(object):
     def __init__(self, d_guild: discord.Guild, d_role: discord.Role, role_type: str, role_data):
+        """
+        :param role_type:
+        - 'points' then role_data: int
+        - 'demons' then role_data: list(Demon)
+        - 'positional' then role_data: dict
+        - 'counter' then role_data: str['records', 'published', 'verified', 'created']
+        """
         self.d_guild = d_guild
         self.d_role = d_role
         self.role_type = role_type
@@ -292,6 +307,7 @@ class PCRole(object):
 
 DEMON_LIST = PCList(list_type='demon')
 PLAYER_LIST = PCList(list_type='player')
+ROLE_LIST = PCList(list_type='role')
 
 
 def update_demons_list():
@@ -495,7 +511,40 @@ async def response_message(ctx, response, message_reaction, preset=""):
     await ctx.message.add_reaction(mri[message_reaction])
 
 
+def get_role(gr_guild, gr_i):
+    try:
+        rid = int(gr_i)
+        return discord.utils.find(lambda r: str(rid) in str(r.id), gr_guild.roles)
+    except ValueError:
+        try:
+            return discord.utils.find(lambda r: gr_i.lower() in r.name.lower(), gr_guild.roles)
+        except AttributeError:
+            return None
+
+
+def bot_permissions(ctx) -> bool:
+    if not ctx.message.guild:
+        return True
+    for member in ctx.guild.members:
+        if str(member.id) == str(client.user.id):
+            for role in member.roles:
+                if role.permissions.administrator:
+                    return True
+    return False
+
+
+def author_permissions(ctx) -> bool:
+    if not ctx.message.guild:
+        return True
+    for member in ctx.guild.members:
+        if str(member.id) == str(ctx.author.id):
+            for role in member.roles:
+                if role.permissions.administrator:
+                    return True
+    return False
+
 # Specific Discord Demons List methods
+
 
 def user_gb(i_user):
     return i_user == client.get_user(172861416364179456)
@@ -533,6 +582,31 @@ async def old_kc_data(ctx):
         print(PLAYER_LIST.ls)
         await ctx.channel.send('`[Updating]` Files written!')
         await response_message(ctx, 'Old *KC* data updated.', 'success')
+
+
+@client.command(pass_context=True)
+async def rc_role(ctx, rc_type, i_role, rc_role_type=None, rc_role_params=None):
+    # rc_role add|remove i_role points|demons|positional parameters
+    if bot_permissions(ctx):
+        if author_permissions(ctx):
+            set_role = get_role(gr_guild=ctx.guild, gr_i=i_role)
+            if set_role:
+                if rc_type.lower() == 'add':
+                    rc_conditions = True
+                    if not rc_role_type:
+                        rc_conditions = False
+                    else:
+                        
+                elif rc_type.lower() == 'remove':
+                    pass
+                else:
+                    await response_message(ctx, response='Invalid type!', message_reaction='failed')
+            else:
+                await response_message(ctx, response='Invalid role!', message_reaction='failed')
+        else:
+            await response_message(ctx, response='', message_reaction='failed', preset='perms_failed_author')
+    else:
+        await response_message(ctx, response='', message_reaction='failed', preset='perms_failed_bot')
 
 
 client.run(SECRET)
