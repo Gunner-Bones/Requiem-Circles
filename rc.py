@@ -27,6 +27,15 @@ CHAR_FAILED = "❌"
 CHAR_SENT = "📨"
 
 
+def is_number(st):
+    try:
+        st = int(st)
+        st += 1
+    except ValueError:
+        return False
+    return True
+
+
 def points_formula(completion) -> float:
     pgr = 100
     pos = 1
@@ -270,14 +279,16 @@ class PCList(object):
         self.positional_sort()
 
     def remove_object(self, i_obj):
+        r_obj = True
         use_obj = i_obj
         if type(use_obj) is dict:
             use_obj = pc_to_obj(use_obj, self.list_type)
         try:
             self.ls.remove(use_obj)
         except ValueError:
-            pass
+            r_obj = False
         self.positional_sort()
+        return r_obj
 
     def positional_sort(self):
         if self.list_type == 'demon':
@@ -296,13 +307,27 @@ class PCRole(object):
         :param role_type:
         - 'points' then role_data: int
         - 'demons' then role_data: list(Demon)
-        - 'positional' then role_data: dict
-        - 'counter' then role_data: str['records', 'published', 'verified', 'created']
+        - 'positional' then role_data: list(int)
+        - 'counter' then role_data: list[str['records', 'published', 'verified', 'created'], int]
         """
         self.d_guild = d_guild
         self.d_role = d_role
         self.role_type = role_type
         self.role_data = role_data
+
+    def str_requirements(self):
+        if self.role_type == 'points':
+            return str(self.role_data) + " point(s)"
+        elif self.role_type == 'demons':
+            r_st = ''
+            for d in self.role_data:
+                r_st += d.name + ", "
+            return "Complete " + r_st[:-2]
+        elif self.role_type == 'positional':
+            return "Base Pos: " + str(self.role_data[0]) + ", Range from Base: " + str(self.role_data[1]) + \
+                   ", # Required: " + str(self.role_data[2])
+        elif self.role_type == 'counter':
+            return str(self.role_data[1]) + " Levels in " + self.role_data[0].capitalize()
 
 
 DEMON_LIST = PCList(list_type='demon')
@@ -560,7 +585,6 @@ async def on_ready():
             server_list += server.name + ", "
     print("Connected Guilds: " + server_list[:len(server_list) - 2])
     update_demons_list()
-    old_rewrite_player_data()
     master_files_write()
     master_files_read()
     print(DEMON_LIST)
@@ -586,19 +610,95 @@ async def old_kc_data(ctx):
 
 @client.command(pass_context=True)
 async def rc_role(ctx, rc_type, i_role, rc_role_type=None, rc_role_params=None):
-    # rc_role add|remove i_role points|demons|positional parameters
+    # rc_role add|remove i_role points|demons|positional|counter parameters
     if bot_permissions(ctx):
         if author_permissions(ctx):
             set_role = get_role(gr_guild=ctx.guild, gr_i=i_role)
             if set_role:
                 if rc_type.lower() == 'add':
                     rc_conditions = True
-                    if not rc_role_type:
-                        rc_conditions = False
-                    else:
-                        
+                    if rc_role_type:
+                        rc_role_data = None
+                        if rc_role_type.lower() == 'points':
+                            if not is_number(rc_role_params):
+                                rc_conditions = False
+                            else:
+                                rc_points = int(rc_role_params)
+                                rc_role_data = rc_points
+                        elif rc_role_type.lower() == 'demons':
+                            if is_number(rc_role_params):
+                                rc_conditions = False
+                            else:
+                                rc_demons = rc_role_params.replace(" ", "").split(",")
+                                rc_demons_l = []
+                                for d in rc_demons:
+                                    for ld in DEMON_LIST.ls:
+                                        if ld.name.lower() == d.lower():
+                                            rc_demons_l.append(ld)
+                                if len(rc_demons) != len(rc_demons_l):
+                                    rc_conditions = False
+                                else:
+                                    rc_role_data = rc_demons_l
+                        elif rc_role_type.lower() in ['positional', 'pos']:  # base,range,count
+                            if is_number(rc_role_params):
+                                rc_conditions = False
+                            else:
+                                rc_pos = rc_role_params.split(",")
+                                if len(rc_pos) != 3:
+                                    rc_conditions = False
+                                else:
+                                    for p in rc_pos:
+                                        if is_number(p):
+                                            rc_pos[rc_pos.index(p)] = int(p)
+                                        else:
+                                            rc_conditions = False
+                                    if rc_pos[0] - rc_pos[1] < 0 or rc_pos[2] > rc_pos[1] or \
+                                            rc_pos[0] > 150 or rc_pos[0] < 1:
+                                        rc_conditions = False
+                                    else:
+                                        rc_pos_base = rc_pos[0]
+                                        rc_pos_range = rc_pos[1]
+                                        rc_count = rc_pos[2]
+                                        rc_role_data = [rc_pos_base, rc_pos_range, rc_count]
+                        elif rc_role_type.lower() == 'counter':  # type,count
+                            if is_number(rc_role_params):
+                                rc_conditions = False
+                            else:
+                                rc_counter = rc_role_params.split(",")
+                                if len(rc_counter) != 2:
+                                    rc_conditions = False
+                                else:
+                                    if not is_number(rc_counter[1]):
+                                        rc_conditions = False
+                                    else:
+                                        if rc_counter[0].lower() not in ['records', 'published', 'verified', 'created']:
+                                            rc_conditions = False
+                                        else:
+                                            rc_completion_type = rc_counter[0]
+                                            rc_count = int(rc_counter[1])
+                                            rc_role_data = [rc_completion_type, rc_count]
+                        if rc_conditions and rc_role_data:
+                            rc_role_r = PCRole(d_guild=ctx.guild, d_role=set_role, role_type=rc_role_type.lower(),
+                                               role_data=rc_role_data)
+                            ROLE_LIST.update_object(rc_role_r)
+                            await response_message(ctx, response='Role set!', message_reaction='success')
+                            role_set_m = '__**New PC Role**__\n'
+                            role_set_m += '__Role:__ ' + set_role.name + "\n"
+                            role_set_m += '__Type:__ ' + rc_role_type.lower().capitalize() + '\n'
+                            role_set_m += '__Requirements:__ ' + rc_role_r.str_requirements()
+                            await ctx.channel.send(content=role_set_m)
+                        else:
+                            await response_message(ctx, response='', message_reaction='failed', preset='params_failed')
                 elif rc_type.lower() == 'remove':
-                    pass
+                    rc_remove = None
+                    for pc_role in ROLE_LIST.ls:
+                        if pc_role.d_role == set_role:
+                            rc_remove = pc_role
+                    if ROLE_LIST.remove_object(rc_remove):
+                        await response_message(ctx, response='Role *' + rc_remove.d_role.name + '* unset from PC Role!',
+                                               message_reaction='success')
+                    else:
+                        await response_message(ctx, response='Could not find role!', message_reaction='failed')
                 else:
                     await response_message(ctx, response='Invalid type!', message_reaction='failed')
             else:
