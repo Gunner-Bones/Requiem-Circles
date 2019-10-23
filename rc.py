@@ -3,6 +3,9 @@ import urllib.request
 import json
 import math
 import discord
+import random
+import asyncio
+import datetime
 from discord.ext import commands
 
 Client = discord.Client()
@@ -21,6 +24,7 @@ for l in s:
 SECRET = sl[0]
 FILE_PLAYERS = "players.csv"
 FILE_DEMONS = "demons.csv"
+FILE_ROLES = "roles.csv"
 FILE_PC_DATA = "pc_data.txt"
 CHAR_SUCCESS = "✅"
 CHAR_FAILED = "❌"
@@ -49,6 +53,8 @@ def points_formula(completion) -> float:
         pos = completion.position
         rq = completion.requirement
     if pos >= 151:
+        return 0.0
+    if pos >= 76 and pgr < 100:
         return 0.0
     if pgr == 100:
         return 150.0 * math.exp((1.0 - pos) * math.log(1.0 / 30.0) / (-149.0))
@@ -133,16 +139,79 @@ def condense_dict(i_dic, obj_type: str) -> str:
     if obj_type == 'player_record':  # DEMON_ID:DEMON_NAME:DEMON_POS:RID:PROGRESS:STATUS
         return str(i_dic.demon.pid) + ":" + i_dic.demon.name + ":" + str(i_dic.demon.position) + ":" + \
             str(i_dic.rid) + ":" + str(i_dic.progress) + ":" + str(i_dic.demon.requirement)
+    if obj_type == 'role_demons':
+        r_str = ''
+        for d in i_dic:
+            r_str += d.name + ":"
+        return r_str[:-1]
+    if obj_type == 'role_positional':
+        return str(i_dic[0]) + ":" + str(i_dic[1]) + ":" + str(i_dic[2])
+    if obj_type == 'role_counter':
+        return i_dic[0] + ":" + str(i_dic[1])
 
 
 def unpack_dict(i_str: str, obj_type: str):
     if obj_type in ['player_published', 'player_verified', 'player_created']:
         unp_str = i_str.split(":")
+        demon_off_list = True
+        for dl in DEMON_LIST.ls:
+            if str(dl.pid) == unp_str[0]:
+                demon_off_list = False
+                if unp_str[2] != str(dl.position):
+                    unp_str[2] = str(dl.position)
+                break
+        if demon_off_list:
+            unp_str[2] = str(200 + random.randint(1, 50))  # placeholder position for levels moved to legacy
+            unp_str.append('100')
+        if len(unp_str) == 3:
+            if int(unp_str[2]) > 150 and not demon_off_list:
+                unp_str.append('100')
+            else:
+                for dl in DEMON_LIST.ls:
+                    if str(dl.pid) == unp_str[0]:
+                        unp_str.append(str(dl.requirement))
+                        break
         return Demon(name=unp_str[1], pid=int(unp_str[0]), position=int(unp_str[2]), requirement=int(unp_str[3]))
     if obj_type == 'player_record':
         unp_str = i_str.split(":")
+        demon_off_list = True
+        for dl in DEMON_LIST.ls:
+            if str(dl.pid) == unp_str[0]:
+                demon_off_list = False
+                if unp_str[2] != str(dl.position):
+                    unp_str[2] = str(dl.position)
+                    break
+        if demon_off_list:
+            unp_str[2] = str(200 + random.randint(1, 50))  # placeholder position for levels moved to legacy
+            unp_str.append('100')
+        if len(unp_str) == 5:
+            if int(unp_str[2]) > 150 and not demon_off_list:
+                unp_str.append('100')
+            else:
+                for dl in DEMON_LIST.ls:
+                    if str(dl.pid) == unp_str[0]:
+                        unp_str.append(str(dl.requirement))
+                        break
         return Record(demon=Demon(pid=int(unp_str[0]), name=unp_str[1], position=int(unp_str[2]),
                                   requirement=int(unp_str[5])), rid=int(unp_str[3]), progress=int(unp_str[4]))
+    if obj_type == 'role_demons':
+        if ':' not in i_str:
+            unp_str = [i_str]
+        else:
+            unp_str = i_str.split(":")
+        for d in unp_str:
+            unp_str[unp_str.index(d)] = d.lower()
+        unp_demons = []
+        for ld in DEMON_LIST.ls:
+            if ld.name.lower() in unp_str:
+                unp_demons.append(ld)
+        return unp_demons
+    if obj_type == 'role_positional':
+        unp_str = i_str.split(":")
+        return [int(u) for u in unp_str]
+    if obj_type == 'role_counter':
+        unp_str = i_str.split(":")
+        return [unp_str[0], int(unp_str[1])]
 
 
 def pc_to_obj(i_dic: dict, obj_type: str):
@@ -294,6 +363,12 @@ class PCList(object):
         if self.list_type == 'demon':
             self.ls.sort(key=lambda x: x.position, reverse=False)
 
+    def player_by_member(self, member: discord.Member):
+        if self.list_type == 'player':
+            for player in self.ls:
+                if str(player.did) == str(member.id):
+                    return player
+
     def __str__(self):
         return_ls = []
         for obj in self.ls:
@@ -328,6 +403,54 @@ class PCRole(object):
                    ", # Required: " + str(self.role_data[2])
         elif self.role_type == 'counter':
             return str(self.role_data[1]) + " Levels in " + self.role_data[0].capitalize()
+
+    def __str__(self):
+        return '<PCRole> Role ID:' + str(self.d_role.id) + " Guild ID:" + str(self.d_guild.id) + " Type:" + \
+               self.role_type + " Raw Data:" + str(self.role_data)
+
+    def meets_requirements(self, player: Player):
+        if self.role_type == 'points':
+            return player.points >= self.role_data
+        elif self.role_type == 'demons':
+            found = {}
+            for d in self.role_data:
+                found[d.pid] = False
+            for record in player.records:
+                if record.demon.pid in found.keys():
+                    found[record.demon.pid] = True
+            for verified in player.verified:
+                if verified.pid in found.keys():
+                    found[verified.pid] = True
+            for d in found:
+                if not found[d]:
+                    return False
+            return True
+        elif self.role_type == 'positional':
+            pos_max = int(self.role_data[0]) - int(self.role_data[1])
+            pos_min = int(self.role_data[0])
+            counter = 0
+            for record in player.records:
+                if pos_min >= record.demon.position >= pos_max:
+                    counter += 1
+            for verified in player.verified:
+                if pos_min >= verified.position >= pos_max:
+                    counter += 1
+            return counter >= int(self.role_data[2])
+        elif self.role_type == 'counter':
+            counter = 0
+            if self.role_data[0] == 'records':
+                for _ in player.records:
+                    counter += 1
+            elif self.role_data[0] == 'verified':
+                for _ in player.verified:
+                    counter += 1
+            elif self.role_data[0] == 'published':
+                for _ in player.published:
+                    counter += 1
+            elif self.role_data[0] == 'created':
+                for _ in player.created:
+                    counter += 1
+            return counter >= int(self.role_data[1])
 
 
 DEMON_LIST = PCList(list_type='demon')
@@ -460,6 +583,25 @@ def master_files_read():
                                    records=player_records, verified=player_verified,
                                    published=player_published, created=player_created)
             PLAYER_LIST.update_object(update_player)
+    # Roles List
+    read_data = file_data(file_name=FILE_ROLES)
+    for data in read_data:
+        if not data.startswith('ROLE_ID') and len(data) > 5:
+            data_role = data.split(', ')
+            role_guild = client.get_guild(int(data_role[1]))
+            if not role_guild:
+                continue
+            role_role = get_role(gr_guild=role_guild, gr_i=int(data_role[0]))
+            if not role_role:
+                continue
+            role_type = data_role[2]
+            role_data = data_role[3]
+            if role_type == 'points':
+                role_data = int(role_data)
+            elif role_type in ['demons', 'positional', 'counter']:
+                role_data = unpack_dict(i_str=role_data, obj_type='role_' + role_type)
+            update_role = PCRole(d_guild=role_guild, d_role=role_role, role_type=role_type, role_data=role_data)
+            ROLE_LIST.update_object(update_role)
     print('[master_files_read] Files updated to internal PCLists.')
 
 
@@ -468,61 +610,89 @@ def master_files_write():
     # Demons List
     old_data = file_data(file_name=FILE_DEMONS)
     write_data = ["NAME, PID, POSITION, REQUIREMENT"]
-    for demon in DEMON_LIST.ls:
-        write_data.append(demon.name + ", " + str(demon.pid) + ", " + str(demon.position) + ", " +
-                          str(demon.requirement))
-    with open(file=FILE_DEMONS, mode='r+', encoding='utf-8') as outfile:
-        if old_data != write_data:
-            outfile.truncate()
-            write_data_s = ""
-            for st in write_data:
-                write_data_s += st + "\n"
-            print(write_data_s, file=outfile)
-        outfile.close()
+    if len(DEMON_LIST.ls) != 0:
+        for demon in DEMON_LIST.ls:
+            write_data.append(demon.name + ", " + str(demon.pid) + ", " + str(demon.position) + ", " +
+                              str(demon.requirement))
+        with open(file=FILE_DEMONS, mode='r+', encoding='utf-8') as outfile:
+            if old_data != write_data:
+                outfile.truncate()
+                write_data_s = ""
+                for st in write_data:
+                    write_data_s += st + "\n"
+                print(write_data_s, file=outfile)
+            outfile.close()
     # Players List
     old_data = file_data(file_name=FILE_PLAYERS)
     write_data = ["NAME, PID, RECORDS, PUBLISHED, VERIFIED, CREATED, DID"]
-    for player in PLAYER_LIST.ls:
-        player_records = player.records
-        player_records_write = "NONE"
-        if player_records:
-            player_records_write = ""
-            for record in player_records:
-                player_records_write += condense_dict(record, 'player_record') + ";"
-            player_records_write = player_records_write[:-1]
-        player_published = player.published
-        player_published_write = "NONE"
-        if player_published:
-            player_published_write = ""
-            for published in player_published:
-                player_published_write += condense_dict(published, 'player_published') + ";"
-            player_published_write = player_published_write[:-1]
-        player_verified = player.verified
-        player_verified_write = "NONE"
-        if player_verified:
-            player_verified_write = ""
-            for verified in player_verified:
-                player_verified_write += condense_dict(verified, 'player_verified') + ";"
-            player_verified_write = player_verified_write[:-1]
-        player_created = player.created
-        player_created_write = "NONE"
-        if player_created:
-            player_created_write = ""
-            for created in player_created:
-                player_created_write += condense_dict(created, 'player_created') + ";"
-            player_created_write = player_created_write[:-1]
-        write_data.append(player.name + ", " + str(player.pid) + ", " + player_records_write + ", " +
-                          player_published_write + ", " + player_verified_write + ", " + player_created_write + ", " +
-                          player.did)
-    with open(file=FILE_PLAYERS, mode='r+', encoding='utf-8') as outfile:
-        if old_data != write_data:
-            outfile.truncate()
-            write_data_s = ""
-            for st in write_data:
-                write_data_s += st + '\n'
-            print(write_data_s, file=outfile)
-        outfile.close()
+    if len(PLAYER_LIST.ls) != 0:
+        for player in PLAYER_LIST.ls:
+            player_records = player.records
+            player_records_write = "NONE"
+            if player_records:
+                player_records_write = ""
+                for record in player_records:
+                    player_records_write += condense_dict(record, 'player_record') + ";"
+                player_records_write = player_records_write[:-1]
+            player_published = player.published
+            player_published_write = "NONE"
+            if player_published:
+                player_published_write = ""
+                for published in player_published:
+                    player_published_write += condense_dict(published, 'player_published') + ";"
+                player_published_write = player_published_write[:-1]
+            player_verified = player.verified
+            player_verified_write = "NONE"
+            if player_verified:
+                player_verified_write = ""
+                for verified in player_verified:
+                    player_verified_write += condense_dict(verified, 'player_verified') + ";"
+                player_verified_write = player_verified_write[:-1]
+            player_created = player.created
+            player_created_write = "NONE"
+            if player_created:
+                player_created_write = ""
+                for created in player_created:
+                    player_created_write += condense_dict(created, 'player_created') + ";"
+                player_created_write = player_created_write[:-1]
+            write_data.append(player.name + ", " + str(player.pid) + ", " + player_records_write + ", " +
+                              player_published_write + ", " + player_verified_write + ", " + player_created_write +
+                              ", " + player.did)
+        with open(file=FILE_PLAYERS, mode='r+', encoding='utf-8') as outfile:
+            if old_data != write_data:
+                outfile.truncate()
+                write_data_s = ""
+                for st in write_data:
+                    write_data_s += st + '\n'
+                print(write_data_s, file=outfile)
+            outfile.close()
+    # Roles List
+    old_data = file_data(file_name=FILE_ROLES)
+    write_data = ["ROLE_ID, GUILD_ID, TYPE, DATA"]
+    if len(ROLE_LIST.ls) != 0:
+        for role in ROLE_LIST.ls:
+            role_data = 'NONE'
+            if role.role_type == 'points':
+                role_data = str(role.role_data)
+            elif role.role_type in ['demons', 'positional', 'counter']:
+                role_data = condense_dict(i_dic=role.role_data, obj_type='role_' + role.role_type)
+            write_data.append(str(role.d_role.id) + ', ' + str(role.d_guild.id) + ', ' + role.role_type + ', ' +
+                              role_data)
+        with open(file=FILE_ROLES, mode='r+', encoding='utf-8') as outfile:
+            if old_data != write_data:
+                outfile.truncate()
+                write_data_s = ""
+                for st in write_data:
+                    write_data_s += st + '\n'
+                print(write_data_s, file=outfile)
+            outfile.close()
     print("[master_files_write] Files updated")
+
+
+def debug_print_lists():
+    print(DEMON_LIST)
+    print(PLAYER_LIST)
+    print(ROLE_LIST)
 
 
 async def response_message(ctx, response, message_reaction, preset=""):
@@ -536,7 +706,7 @@ async def response_message(ctx, response, message_reaction, preset=""):
     await ctx.message.add_reaction(mri[message_reaction])
 
 
-def get_role(gr_guild, gr_i):
+def get_role(gr_guild: discord.Guild, gr_i):
     try:
         rid = int(gr_i)
         return discord.utils.find(lambda r: str(rid) in str(r.id), gr_guild.roles)
@@ -545,6 +715,12 @@ def get_role(gr_guild, gr_i):
             return discord.utils.find(lambda r: gr_i.lower() in r.name.lower(), gr_guild.roles)
         except AttributeError:
             return None
+
+
+def search_member(gr_guild: discord.Guild, gr_i: str) -> discord.Member:
+    for member in gr_guild.members:
+        if member.name.lower() == gr_i.strip().lower():
+            return member
 
 
 def bot_permissions(ctx) -> bool:
@@ -568,6 +744,50 @@ def author_permissions(ctx) -> bool:
                     return True
     return False
 
+
+REFRESH_NOW = False
+
+
+async def roles_refresh():
+    global REFRESH_NOW
+    await client.wait_until_ready()
+    while True:
+        await asyncio.sleep(5)
+        if datetime.datetime.now().minute == 00 or REFRESH_NOW:
+            REFRESH_NOW = False
+            print('[roles_refresh] Refreshing...')
+            master_files_write()
+            master_files_read()
+            # PC Roles
+            refresh_roles_added = 0
+            refresh_roles_removed = 0
+            for guild in client.guilds:
+                for member in guild.members:
+                    player = PLAYER_LIST.player_by_member(member=member)
+                    if player:
+                        for pc_role in ROLE_LIST.ls:
+                            if pc_role.d_role.guild == guild:
+                                if pc_role.meets_requirements(player=player):
+                                    if pc_role.d_role not in member.roles:
+                                        try:
+                                            await member.add_roles(pc_role.d_role)
+                                            refresh_roles_added += 1
+                                        except discord.Forbidden:
+                                            print('[roles_refresh] Missing Permissions: Adding \"' +
+                                                  pc_role.d_role.name + '\" to \"' + member.name + '\"')
+                                else:
+                                    if pc_role.d_role in member.roles:
+                                        try:
+                                            await member.remove_roles(pc_role.d_role)
+                                            refresh_roles_removed += 1
+                                        except discord.Forbidden:
+                                            print('[roles_refresh] Missing Permissions: Removing \"' +
+                                                  pc_role.d_role.name + '\" from \"' + member.name + '\"')
+            print('[roles_refresh] Refreshed!')
+            print('[roles_refresh] PC Roles | Added ' + str(refresh_roles_added) + ' Removed ' +
+                  str(refresh_roles_removed))
+            await asyncio.sleep(60)
+
 # Specific Discord Demons List methods
 
 
@@ -575,8 +795,31 @@ def user_gb(i_user):
     return i_user == client.get_user(172861416364179456)
 
 
+def member_self(m_guild: discord.Guild) -> discord.Member:
+    for member in m_guild.members:
+        if member.id == client.user.id:
+            return member
+
+
+def guild_pros() -> discord.Guild:
+    return client.get_guild(633023820206309416)
+
+
+def role_list_helper() -> discord.Role:
+    return get_role(guild_pros(), 633025317455527962)
+
+
+def role_list_moderator() -> discord.Role:
+    return get_role(guild_pros(), 633025213440983041)
+
+
+def role_list_leader() -> discord.Role:
+    return get_role(guild_pros(), 633024750024917003)
+
+
 @client.event
 async def on_ready():
+    global REFRESH_NOW
     print("Bot Ready!")
     print("Name: " + client.user.name + ", ID: " + str(client.user.id))
     server_list = ""
@@ -584,11 +827,18 @@ async def on_ready():
         if server is not None:
             server_list += server.name + ", "
     print("Connected Guilds: " + server_list[:len(server_list) - 2])
+    await client.wait_until_ready()
     update_demons_list()
     master_files_write()
     master_files_read()
-    print(DEMON_LIST)
-    print(PLAYER_LIST)
+    debug_print_lists()
+
+
+@client.event
+async def on_command_error(_, error):
+    if isinstance(error, commands.CommandNotFound):
+        return
+    raise error
 
 
 @client.command(pass_context=True)
@@ -609,11 +859,36 @@ async def old_kc_data(ctx):
 
 
 @client.command(pass_context=True)
+async def debug_write_read(ctx):
+    if user_gb(ctx.author):
+        await ctx.channel.send('`[Updating]` Writing changes to CSV files...')
+        master_files_write()
+        await ctx.channel.send('`[Updating]` Files written!')
+        await ctx.channel.send('`[Updating]` Reading from CSV files...')
+        master_files_read()
+        await ctx.channel.send('`[Updating]` Files read!')
+
+
+@client.command(pass_context=True)
+async def refresh_now(ctx):
+    global REFRESH_NOW
+    if bot_permissions(ctx):
+        if author_permissions(ctx):
+            REFRESH_NOW = True
+            await response_message(ctx, response='Refreshing now...', message_reaction='success')
+        else:
+            await response_message(ctx, response='', message_reaction='failed', preset='perms_failed_author')
+    else:
+        await response_message(ctx, response='', message_reaction='failed', preset='perms_failed_bot')
+
+
+@client.command(pass_context=True)
 async def rc_role(ctx, rc_type, i_role, rc_role_type=None, rc_role_params=None):
     # rc_role add|remove i_role points|demons|positional|counter parameters
     if bot_permissions(ctx):
         if author_permissions(ctx):
-            set_role = get_role(gr_guild=ctx.guild, gr_i=i_role)
+            use_role = i_role.replace('_', ' ')
+            set_role = get_role(gr_guild=ctx.guild, gr_i=use_role)
             if set_role:
                 if rc_type.lower() == 'add':
                     rc_conditions = True
@@ -687,6 +962,18 @@ async def rc_role(ctx, rc_type, i_role, rc_role_type=None, rc_role_params=None):
                             role_set_m += '__Type:__ ' + rc_role_type.lower().capitalize() + '\n'
                             role_set_m += '__Requirements:__ ' + rc_role_r.str_requirements()
                             await ctx.channel.send(content=role_set_m)
+                            master_files_write()
+                            debug_print_lists()
+                            for member in ctx.guild.members:
+                                player = PLAYER_LIST.player_by_member(member)
+                                if player:
+                                    if rc_role_r.meets_requirements(player):
+                                        if rc_role_r.d_role not in member.roles:
+                                            try:
+                                                await member.add_roles(rc_role_r.d_role)
+                                            except discord.Forbidden:
+                                                print('[rc_role] Missing Permissions: Adding \"' +
+                                                      rc_role_r.d_role.name + '\" to \"' + member.name + '\"')
                         else:
                             await response_message(ctx, response='', message_reaction='failed', preset='params_failed')
                 elif rc_type.lower() == 'remove':
@@ -694,9 +981,18 @@ async def rc_role(ctx, rc_type, i_role, rc_role_type=None, rc_role_params=None):
                     for pc_role in ROLE_LIST.ls:
                         if pc_role.d_role == set_role:
                             rc_remove = pc_role
+                    for member in ctx.guild.members:
+                        if rc_remove.d_role in member.roles:
+                            try:
+                                await member.remove_roles(rc_remove.d_role)
+                            except discord.Forbidden:
+                                print('[rc_role] Missing Permissions: Removing \"' + rc_remove.d_role.name +
+                                      '\" from \"' + member.name + '\"')
                     if ROLE_LIST.remove_object(rc_remove):
                         await response_message(ctx, response='Role *' + rc_remove.d_role.name + '* unset from PC Role!',
                                                message_reaction='success')
+                        master_files_write()
+                        debug_print_lists()
                     else:
                         await response_message(ctx, response='Could not find role!', message_reaction='failed')
                 else:
@@ -709,4 +1005,23 @@ async def rc_role(ctx, rc_type, i_role, rc_role_type=None, rc_role_params=None):
         await response_message(ctx, response='', message_reaction='failed', preset='perms_failed_bot')
 
 
+@client.command(pass_context=True)
+async def rc_list(ctx):
+    rc_embed = discord.Embed(title='Listing all RC Roles', description=ctx.guild.name,
+                             color=member_self(ctx.guild).color)
+    for pc_role in ROLE_LIST.ls:
+        rc_embed.add_field(name=pc_role.d_role.name, value='<@&' + str(pc_role.d_role.id) + '> : ' +
+                                                           pc_role.str_requirements(), inline=False)
+    await ctx.channel.send(embed=rc_embed)
+
+
+@client.command(pass_context=True)
+async def player_link(ctx, i_user, i_pid):
+    if role_list_helper() in ctx.author.roles:
+        use_user = search_member(gr_guild=ctx.guild, gr_i=i_user)
+    else:
+        await response_message(ctx, response='You are not on the Demon List staff!', message_reaction='failed')
+
+
+client.loop.create_task(roles_refresh())
 client.run(SECRET)
