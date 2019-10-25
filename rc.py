@@ -26,6 +26,8 @@ FILE_PLAYERS = "players.csv"
 FILE_DEMONS = "demons.csv"
 FILE_ROLES = "roles.csv"
 FILE_PC_DATA = "pc_data.txt"
+FILE_WHITELIST = 'whitelist.txt'
+INVITE_DLP = 'https://discord.gg/VkrsU3W'
 CHAR_SUCCESS = "✅"
 CHAR_FAILED = "❌"
 CHAR_SENT = "📨"
@@ -138,7 +140,7 @@ def condense_dict(i_dic, obj_type: str) -> str:
         return str(i_dic.pid) + ":" + i_dic.name + ":" + str(i_dic.position) + ":" + str(i_dic.requirement)
     if obj_type == 'player_record':  # DEMON_ID:DEMON_NAME:DEMON_POS:RID:PROGRESS:STATUS
         return str(i_dic.demon.pid) + ":" + i_dic.demon.name + ":" + str(i_dic.demon.position) + ":" + \
-            str(i_dic.rid) + ":" + str(i_dic.progress) + ":" + str(i_dic.demon.requirement)
+               str(i_dic.rid) + ":" + str(i_dic.progress) + ":" + str(i_dic.demon.requirement)
     if obj_type == 'role_demons':
         r_str = ''
         for d in i_dic:
@@ -377,7 +379,7 @@ class PCList(object):
 
 
 class PCRole(object):
-    def __init__(self, d_guild: discord.Guild, d_role: discord.Role, role_type: str, role_data):
+    def __init__(self, d_guild: discord.Guild, d_role: discord.Role, role_type: str, role_data, whs=False):
         """
         :param role_type:
         - 'points' then role_data: int
@@ -389,6 +391,7 @@ class PCRole(object):
         self.d_role = d_role
         self.role_type = role_type
         self.role_data = role_data
+        self.whs = whs
 
     def str_requirements(self):
         if self.role_type == 'points':
@@ -524,16 +527,19 @@ def old_rewrite_player_data():
 
 def file_data(file_name: str) -> list:
     read_data = []
-    with open(file=file_name, mode='r+', encoding='utf-8') as fd_infile:
-        try:
-            for line in fd_infile:
-                if len(line) > 8:
-                    read_data.append(line.replace('\n', '').replace('"', '').strip())
-            fd_infile.close()
-        except UnicodeDecodeError:
-            fd_infile.truncate()
-            fd_infile.close()
-            return []
+    try:
+        with open(file=file_name, mode='r+', encoding='utf-8') as fd_infile:
+            try:
+                for line in fd_infile:
+                    if len(line) > 8:
+                        read_data.append(line.replace('\n', '').replace('"', '').strip())
+            except UnicodeDecodeError:
+                fd_infile.truncate()
+                return []
+            finally:
+                fd_infile.close()
+    except PermissionError:
+        print('[file_data] Permission Denied opening \"' + file_name + '\" | Is someone editing the file?')
     return read_data
 
 
@@ -596,11 +602,16 @@ def master_files_read():
                 continue
             role_type = data_role[2]
             role_data = data_role[3]
+            try:
+                role_whs = {'False': False, 'True': True}[data_role[4]]
+            except IndexError:
+                role_whs = False
             if role_type == 'points':
                 role_data = int(role_data)
             elif role_type in ['demons', 'positional', 'counter']:
                 role_data = unpack_dict(i_str=role_data, obj_type='role_' + role_type)
-            update_role = PCRole(d_guild=role_guild, d_role=role_role, role_type=role_type, role_data=role_data)
+            update_role = PCRole(d_guild=role_guild, d_role=role_role, role_type=role_type, role_data=role_data,
+                                 whs=role_whs)
             ROLE_LIST.update_object(update_role)
     print('[master_files_read] Files updated to internal PCLists.')
 
@@ -657,7 +668,7 @@ def master_files_write():
                 player_created_write = player_created_write[:-1]
             write_data.append(player.name + ", " + str(player.pid) + ", " + player_records_write + ", " +
                               player_published_write + ", " + player_verified_write + ", " + player_created_write +
-                              ", " + player.did)
+                              ", " + str(player.did))
         with open(file=FILE_PLAYERS, mode='r+', encoding='utf-8') as outfile:
             if old_data != write_data:
                 outfile.truncate()
@@ -668,7 +679,7 @@ def master_files_write():
             outfile.close()
     # Roles List
     old_data = file_data(file_name=FILE_ROLES)
-    write_data = ["ROLE_ID, GUILD_ID, TYPE, DATA"]
+    write_data = ["ROLE_ID, GUILD_ID, TYPE, DATA, WHITELIST"]
     if len(ROLE_LIST.ls) != 0:
         for role in ROLE_LIST.ls:
             role_data = 'NONE'
@@ -677,7 +688,7 @@ def master_files_write():
             elif role.role_type in ['demons', 'positional', 'counter']:
                 role_data = condense_dict(i_dic=role.role_data, obj_type='role_' + role.role_type)
             write_data.append(str(role.d_role.id) + ', ' + str(role.d_guild.id) + ', ' + role.role_type + ', ' +
-                              role_data)
+                              role_data + ', ' + str(role.whs))
         with open(file=FILE_ROLES, mode='r+', encoding='utf-8') as outfile:
             if old_data != write_data:
                 outfile.truncate()
@@ -745,7 +756,7 @@ def author_permissions(ctx) -> bool:
     return False
 
 
-REFRESH_NOW = False
+REFRESH_NOW = None
 
 
 async def roles_refresh():
@@ -754,7 +765,6 @@ async def roles_refresh():
     while True:
         await asyncio.sleep(5)
         if datetime.datetime.now().minute == 00 or REFRESH_NOW:
-            REFRESH_NOW = False
             print('[roles_refresh] Refreshing...')
             master_files_write()
             master_files_read()
@@ -786,7 +796,12 @@ async def roles_refresh():
             print('[roles_refresh] Refreshed!')
             print('[roles_refresh] PC Roles | Added ' + str(refresh_roles_added) + ' Removed ' +
                   str(refresh_roles_removed))
+            if REFRESH_NOW:
+                await REFRESH_NOW.send('Refresh finished!\n__Added__: ' + str(refresh_roles_added) + '\n__Removed__: '
+                                       + str(refresh_roles_removed))
+            REFRESH_NOW = None
             await asyncio.sleep(60)
+
 
 # Specific Discord Demons List methods
 
@@ -805,21 +820,37 @@ def guild_pros() -> discord.Guild:
     return client.get_guild(633023820206309416)
 
 
-def role_list_helper() -> discord.Role:
-    return get_role(guild_pros(), 633025317455527962)
+def guild_hq() -> discord.Guild:
+    return client.get_guild(162862229065039872)
 
 
-def role_list_moderator() -> discord.Role:
-    return get_role(guild_pros(), 633025213440983041)
+def guild_ps() -> discord.Guild:
+    return client.get_guild(395654171422097420)
 
 
-def role_list_leader() -> discord.Role:
-    return get_role(guild_pros(), 633024750024917003)
+def role_list_helper(g: discord.Guild) -> discord.Role:
+    helper = {633023820206309416: 633025317455527962,
+              395654171422097420: 395664123716829194,
+              162862229065039872: 254769445723963393}
+    return get_role(g, helper[g.id])
+
+
+def role_list_moderator(g: discord.Guild) -> discord.Role:
+    moderator = {633023820206309416: 633025213440983041,
+                 395654171422097420: 395663789598703619,
+                 162862229065039872: 365519088832872468}
+    return get_role(g, moderator[g.id])
+
+
+def role_list_leader(g: discord.Guild) -> discord.Role:
+    leader = {633023820206309416: 633024750024917003,
+              395654171422097420: 395663660233785345,
+              162862229065039872: 215857332863762432}
+    return get_role(g, leader[g.id])
 
 
 @client.event
 async def on_ready():
-    global REFRESH_NOW
     print("Bot Ready!")
     print("Name: " + client.user.name + ", ID: " + str(client.user.id))
     server_list = ""
@@ -831,12 +862,79 @@ async def on_ready():
     update_demons_list()
     master_files_write()
     master_files_read()
-    debug_print_lists()
+
+
+@client.event
+async def on_member_join(member: discord.Member):
+    if member.guild == guild_pros():
+        allowed = False
+        player = PLAYER_LIST.player_by_member(member)
+        if player:  # Check Whitelisted PC Roles
+            for pc_role in ROLE_LIST.ls:
+                if pc_role.whs:
+                    if pc_role.meets_requirements(player):
+                        allowed = True
+                        try:
+                            await member.add_roles(pc_role.d_role)
+                        except discord.Forbidden:
+                            print('[on_member_join] Missing Permissions: Adding \"' +
+                                  pc_role.d_role.name + '\" to \"' + member.name + '\"')
+            if guild_hq().get_member(member.id):
+                if role_list_helper(guild_hq()) in guild_hq().get_member(member.id).roles:  # Check List staff
+                    allowed = True
+        else:  # Check Whitelist exempts
+            with open(file=FILE_WHITELIST, mode='r') as infile:
+                exempts = [line.strip().replace('\n', '') for line in infile]
+                if str(member.id) in exempts:
+                    allowed = True
+                infile.close()
+        if not allowed:
+            await member.send('Whoa, you\'re not allowed in here! Contact Demon List Staff if you believe this to be a'
+                              ' mistake.')
+            await member.ban(reason='User is not on the Whitelist')
+
+
+@client.event
+async def on_message(message: discord.Message):
+    if not message.guild:
+        if message.content.startswith('??dlp'):
+            if guild_pros().get_member(message.author.id) not in guild_pros().members:
+                await message.author.send('Checking...')
+                await asyncio.sleep(3)
+                allowed = False
+                player = PLAYER_LIST.player_by_member(message.author)
+                if player:  # Check Whitelisted PC Roles
+                    for pc_role in ROLE_LIST.ls:
+                        if pc_role.whs:
+                            if pc_role.meets_requirements(player):
+                                allowed = True
+                                break
+                    if guild_hq().get_member(message.author.id):
+                        if role_list_helper(guild_hq()) in guild_hq().get_member(message.author.id).roles:
+                            # Check List staff
+                            allowed = True
+                else:  # Check Whitelist exempts
+                    with open(file=FILE_WHITELIST, mode='r') as infile:
+                        exempts = [line.strip().replace('\n', '') for line in infile]
+                        if str(message.author.id) in exempts:
+                            allowed = True
+                        infile.close()
+                if allowed:
+                    await message.author.send('Congratulations, you have access to __**Demon List Pros**__!\n' +
+                                              INVITE_DLP)
+                else:
+                    await message.author.send('Access DENIED. You need **200** List Points to join '
+                                              '__**Demon List Pros**__!')
+        else:
+            await message.author.send('Hey! You\'re already in __**Demon List Pros**__!')
+    await client.process_commands(message)
 
 
 @client.event
 async def on_command_error(_, error):
     if isinstance(error, commands.CommandNotFound):
+        return
+    if isinstance(error, discord.errors.HTTPException):
         return
     raise error
 
@@ -873,11 +971,11 @@ async def debug_write_read(ctx):
 async def refresh_now(ctx):
     global REFRESH_NOW
     if bot_permissions(ctx):
-        if author_permissions(ctx):
-            REFRESH_NOW = True
+        if role_list_helper(ctx.guild) in ctx.author.roles:
+            REFRESH_NOW = ctx.channel
             await response_message(ctx, response='Refreshing now...', message_reaction='success')
         else:
-            await response_message(ctx, response='', message_reaction='failed', preset='perms_failed_author')
+            await response_message(ctx, response='You are not on the Demon List staff!', message_reaction='failed')
     else:
         await response_message(ctx, response='', message_reaction='failed', preset='perms_failed_bot')
 
@@ -886,7 +984,7 @@ async def refresh_now(ctx):
 async def rc_role(ctx, rc_type, i_role, rc_role_type=None, rc_role_params=None):
     # rc_role add|remove i_role points|demons|positional|counter parameters
     if bot_permissions(ctx):
-        if author_permissions(ctx):
+        if role_list_helper(ctx.guild) in ctx.author.roles:
             use_role = i_role.replace('_', ' ')
             set_role = get_role(gr_guild=ctx.guild, gr_i=use_role)
             if set_role:
@@ -954,7 +1052,7 @@ async def rc_role(ctx, rc_type, i_role, rc_role_type=None, rc_role_params=None):
                                             rc_role_data = [rc_completion_type, rc_count]
                         if rc_conditions and rc_role_data:
                             rc_role_r = PCRole(d_guild=ctx.guild, d_role=set_role, role_type=rc_role_type.lower(),
-                                               role_data=rc_role_data)
+                                               role_data=rc_role_data, whs=False)
                             ROLE_LIST.update_object(rc_role_r)
                             await response_message(ctx, response='Role set!', message_reaction='success')
                             role_set_m = '__**New PC Role**__\n'
@@ -963,7 +1061,6 @@ async def rc_role(ctx, rc_type, i_role, rc_role_type=None, rc_role_params=None):
                             role_set_m += '__Requirements:__ ' + rc_role_r.str_requirements()
                             await ctx.channel.send(content=role_set_m)
                             master_files_write()
-                            debug_print_lists()
                             for member in ctx.guild.members:
                                 player = PLAYER_LIST.player_by_member(member)
                                 if player:
@@ -981,26 +1078,28 @@ async def rc_role(ctx, rc_type, i_role, rc_role_type=None, rc_role_params=None):
                     for pc_role in ROLE_LIST.ls:
                         if pc_role.d_role == set_role:
                             rc_remove = pc_role
-                    for member in ctx.guild.members:
-                        if rc_remove.d_role in member.roles:
-                            try:
-                                await member.remove_roles(rc_remove.d_role)
-                            except discord.Forbidden:
-                                print('[rc_role] Missing Permissions: Removing \"' + rc_remove.d_role.name +
-                                      '\" from \"' + member.name + '\"')
-                    if ROLE_LIST.remove_object(rc_remove):
-                        await response_message(ctx, response='Role *' + rc_remove.d_role.name + '* unset from PC Role!',
-                                               message_reaction='success')
-                        master_files_write()
-                        debug_print_lists()
+                    if rc_remove:
+                        for member in ctx.guild.members:
+                            if rc_remove.d_role in member.roles:
+                                try:
+                                    await member.remove_roles(rc_remove.d_role)
+                                except discord.Forbidden:
+                                    print('[rc_role] Missing Permissions: Removing \"' + rc_remove.d_role.name +
+                                          '\" from \"' + member.name + '\"')
+                        if ROLE_LIST.remove_object(rc_remove):
+                            await response_message(ctx, response='Role *' + rc_remove.d_role.name +
+                                                                 '* unset from PC Role!', message_reaction='success')
+                            master_files_write()
+                        else:
+                            await response_message(ctx, response='Could not find role!', message_reaction='failed')
                     else:
-                        await response_message(ctx, response='Could not find role!', message_reaction='failed')
+                        await response_message(ctx, response='Invalid RC Role!', message_reaction='failed')
                 else:
                     await response_message(ctx, response='Invalid type!', message_reaction='failed')
             else:
                 await response_message(ctx, response='Invalid role!', message_reaction='failed')
         else:
-            await response_message(ctx, response='', message_reaction='failed', preset='perms_failed_author')
+            await response_message(ctx, response='You are not on the Demon List staff!', message_reaction='failed')
     else:
         await response_message(ctx, response='', message_reaction='failed', preset='perms_failed_bot')
 
@@ -1017,10 +1116,105 @@ async def rc_list(ctx):
 
 @client.command(pass_context=True)
 async def player_link(ctx, i_user, i_pid):
-    if role_list_helper() in ctx.author.roles:
+    if role_list_helper(ctx.guild) in ctx.author.roles:
         use_user = search_member(gr_guild=ctx.guild, gr_i=i_user)
+        if use_user:
+            player = pc_player(i_pid)
+            if player:
+                player_obj = pc_to_obj(i_dic=player, obj_type='player')
+                if player_obj:
+                    player_obj.did = int(use_user.id)
+                    PLAYER_LIST.update_object(player_obj)
+                    await response_message(ctx, response='User linked!', message_reaction='success')
+                    link_message = '__User__: ' + use_user.display_name + ' (ID: ' + str(use_user.id) + ')\n'
+                    link_message += '__Player__: ' + player_obj.name + ' (PID: ' + str(player_obj.pid) + ')'
+                    await ctx.channel.send(link_message)
+                    master_files_write()
+                else:
+                    await response_message(ctx, response='Invalid player!', message_reaction='failed')
+            else:
+                await response_message(ctx, response='Invalid player!', message_reaction='failed')
+        else:
+            await response_message(ctx, response='Invalid user!', message_reaction='failed')
     else:
         await response_message(ctx, response='You are not on the Demon List staff!', message_reaction='failed')
+
+
+@client.command(pass_context=True)
+async def player_unlink(ctx, i_user):
+    if role_list_helper(ctx.guild) in ctx.author.roles:
+        use_user = search_member(gr_guild=ctx.guild, gr_i=i_user)
+        if use_user:
+            player_obj = PLAYER_LIST.player_by_member(use_user)
+            if player_obj:
+                PLAYER_LIST.remove_object(player_obj)
+                await response_message(ctx, response='User unlinked!', message_reaction='success')
+                master_files_write()
+            else:
+                await response_message(ctx, response='Invalid player!', message_reaction='failed')
+        else:
+            await response_message(ctx, response='Invalid user!', message_reaction='failed')
+    else:
+        await response_message(ctx, response='You are not on the Demon List staff!', message_reaction='failed')
+
+
+@client.command(pass_context=True)
+async def rc_whitelist(ctx, i_role):
+    if bot_permissions(ctx):
+        if role_list_leader(ctx.guild) in ctx.author.roles:
+            use_role = i_role.replace('_', ' ')
+            set_role = get_role(gr_guild=ctx.guild, gr_i=use_role)
+            if set_role:
+                rc_whs = None
+                for pc_role in ROLE_LIST.ls:
+                    if pc_role.d_role == set_role:
+                        rc_whs = pc_role
+                if rc_whs:
+                    rc_whs.whs = {False: True, True: False}[rc_whs.whs]
+                    await response_message(ctx, response='Whitelist checker for RC Role set to **' + str(rc_whs.whs) +
+                                                         '**!', message_reaction='success')
+                    master_files_write()
+                else:
+                    await response_message(ctx, response='Invalid RC Role!', message_reaction='failed')
+            else:
+                await response_message(ctx, response='Invalid role!', message_reaction='failed')
+        else:
+            await response_message(ctx, response='You are not a Demon List Leader!', message_reaction='failed')
+    else:
+        await response_message(ctx, response='', message_reaction='failed', preset='perms_failed_bot')
+
+
+@client.command(pass_context=True)
+async def exempt_whitelist(ctx, i_user):
+    if bot_permissions(ctx):
+        if role_list_moderator(ctx.guild) in ctx.author.roles:
+            if is_number(i_user):
+                whs_added = True
+                with open(file=FILE_WHITELIST, mode='r') as infile:
+                    exempts = [line.strip().replace('\n', '') for line in infile]
+                    if i_user in exempts:
+                        exempts.remove(i_user)
+                        whs_added = False
+                    else:
+                        exempts.append(i_user)
+                    infile.close()
+                if exempts:
+                    with open(file=FILE_WHITELIST, mode='w') as outfile:
+                        outfile.truncate()
+                        for e in exempts:
+                            print(e, file=outfile)
+                        outfile.close()
+                    whs_message = {True: 'Added', False: 'Removed'}[whs_added]
+                    await response_message(ctx, response=whs_message + ' ' + i_user + ' in Whitelist exempts!',
+                                           message_reaction='success')
+                else:
+                    await response_message(ctx, response='Nothing changed!', message_reaction='failed')
+            else:
+                await response_message(ctx, response='Invalid user!', message_reaction='failed')
+        else:
+            await response_message(ctx, response='You are not a Demon List Moderator!', message_reaction='failed')
+    else:
+        await response_message(ctx, response='', message_reaction='failed', preset='perms_failed_bot')
 
 
 client.loop.create_task(roles_refresh())
