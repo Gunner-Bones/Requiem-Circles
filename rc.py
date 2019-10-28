@@ -732,6 +732,9 @@ def search_member(gr_guild: discord.Guild, gr_i: str) -> discord.Member:
     for member in gr_guild.members:
         if member.name.lower() == gr_i.strip().lower():
             return member
+        if gr_i.strip().lower().isdigit():
+            if str(member.id) == str(gr_i.strip()):
+                return member
 
 
 def bot_permissions(ctx) -> bool:
@@ -757,14 +760,46 @@ def author_permissions(ctx) -> bool:
 
 
 REFRESH_NOW = None
+SUPER_REFRESH_NOW = None
 
 
 async def roles_refresh():
     global REFRESH_NOW
+    global SUPER_REFRESH_NOW
+    master_refresh = False
     await client.wait_until_ready()
     while True:
         await asyncio.sleep(5)
-        if datetime.datetime.now().minute == 00 or REFRESH_NOW:
+        if datetime.datetime.now().minute == 00 and datetime.datetime.now().hour == 00 or SUPER_REFRESH_NOW:
+            master_refresh = True
+            print('[roles_refresh] Master Refreshing...')
+            master_files_write()
+            master_files_read()
+            # Player Refresh
+            read_data = file_data(file_name=FILE_PLAYERS)
+            debug_counter = 9999
+            for data in read_data:
+                if not data.startswith('NAME') and len(data) > 5:
+                    data_player = data.split(", ")
+                    if data_player[2] != "NONE":
+                        if debug_counter == 0:
+                            break
+                        player_pc = pc_player(data_player[1])
+                        if not player_pc:
+                            continue
+                        if player_pc:
+                            debug_counter -= 1
+                            player = pc_to_obj(i_dic=player_pc, obj_type='player')
+                            if player:
+                                PLAYER_LIST.update_object(player)
+                                print('[roles_refresh] Master | ' + player.name + ', Points: ' + str(player.points))
+            print('[roles_refresh] Master Refresh finished!')
+            if isinstance(SUPER_REFRESH_NOW, discord.TextChannel):
+                await SUPER_REFRESH_NOW.send('Refresh finished!')
+            SUPER_REFRESH_NOW = None
+            master_files_write()
+            master_files_read()
+        elif datetime.datetime.now().minute == 00 or REFRESH_NOW:
             print('[roles_refresh] Refreshing...')
             master_files_write()
             master_files_read()
@@ -796,11 +831,15 @@ async def roles_refresh():
             print('[roles_refresh] Refreshed!')
             print('[roles_refresh] PC Roles | Added ' + str(refresh_roles_added) + ' Removed ' +
                   str(refresh_roles_removed))
-            if REFRESH_NOW:
+            if isinstance(REFRESH_NOW, discord.TextChannel):
                 await REFRESH_NOW.send('Refresh finished!\n__Added__: ' + str(refresh_roles_added) + '\n__Removed__: '
                                        + str(refresh_roles_removed))
             REFRESH_NOW = None
-            await asyncio.sleep(60)
+            if not master_refresh:
+                await asyncio.sleep(60)
+            else:
+                master_refresh = False
+                await asyncio.sleep(10)
 
 
 # Specific Discord Demons List methods
@@ -898,43 +937,45 @@ async def on_member_join(member: discord.Member):
 async def on_message(message: discord.Message):
     if not message.guild:
         if message.content.startswith('??dlp'):
-            if guild_pros().get_member(message.author.id) not in guild_pros().members:
-                await message.author.send('Checking...')
-                await asyncio.sleep(3)
-                allowed = False
-                player = PLAYER_LIST.player_by_member(message.author)
-                if player:  # Check Whitelisted PC Roles
-                    for pc_role in ROLE_LIST.ls:
-                        if pc_role.whs:
-                            if pc_role.meets_requirements(player):
+            if message.author.id in [204213203566067714, 212948838862815242]:
+                with open(file='zg.jpg', mode='rb') as zg:
+                    await message.channel.send(file=discord.File(fp=zg))
+            else:
+                if guild_pros().get_member(message.author.id) not in guild_pros().members:
+                    await message.author.send('Checking...')
+                    await asyncio.sleep(3)
+                    allowed = False
+                    player = PLAYER_LIST.player_by_member(message.author)
+                    if player:  # Check Whitelisted PC Roles
+                        for pc_role in ROLE_LIST.ls:
+                            if pc_role.whs:
+                                if pc_role.meets_requirements(player):
+                                    allowed = True
+                                    break
+                        if guild_hq().get_member(message.author.id):
+                            if role_list_helper(guild_hq()) in guild_hq().get_member(message.author.id).roles:
+                                # Check List staff
                                 allowed = True
-                                break
-                    if guild_hq().get_member(message.author.id):
-                        if role_list_helper(guild_hq()) in guild_hq().get_member(message.author.id).roles:
-                            # Check List staff
-                            allowed = True
-                else:  # Check Whitelist exempts
-                    with open(file=FILE_WHITELIST, mode='r') as infile:
-                        exempts = [line.strip().replace('\n', '') for line in infile]
-                        if str(message.author.id) in exempts:
-                            allowed = True
-                        infile.close()
-                if allowed:
-                    await message.author.send('Congratulations, you have access to __**Demon List Pros**__!\n' +
-                                              INVITE_DLP)
+                    else:  # Check Whitelist exempts
+                        with open(file=FILE_WHITELIST, mode='r') as infile:
+                            exempts = [line.strip().replace('\n', '') for line in infile]
+                            if str(message.author.id) in exempts:
+                                allowed = True
+                            infile.close()
+                    if allowed:
+                        await message.author.send('Congratulations, you have access to __**Demon List Pros**__!\n' +
+                                                  INVITE_DLP)
+                    else:
+                        await message.author.send('Access DENIED. You need **200** List Points to join '
+                                                  '__**Demon List Pros**__!')
                 else:
-                    await message.author.send('Access DENIED. You need **200** List Points to join '
-                                              '__**Demon List Pros**__!')
-        else:
-            await message.author.send('Hey! You\'re already in __**Demon List Pros**__!')
+                    await message.author.send('Hey! You\'re already in __**Demon List Pros**__!')
     await client.process_commands(message)
 
 
 @client.event
 async def on_command_error(_, error):
     if isinstance(error, commands.CommandNotFound):
-        return
-    if isinstance(error, discord.errors.HTTPException):
         return
     raise error
 
@@ -968,12 +1009,29 @@ async def debug_write_read(ctx):
 
 
 @client.command(pass_context=True)
+async def super_refresh_now(ctx):
+    global SUPER_REFRESH_NOW
+    if bot_permissions(ctx):
+        if user_gb(ctx.author):
+            if not SUPER_REFRESH_NOW:
+                SUPER_REFRESH_NOW = ctx.channel
+                await response_message(ctx, response='Master Refreshing now...', message_reaction='success')
+            else:
+                await response_message(ctx, response='Already master refreshing!', message_reaction='failed')
+    else:
+        await response_message(ctx, response='', message_reaction='failed', preset='perms_failed_bot')
+
+
+@client.command(pass_context=True)
 async def refresh_now(ctx):
     global REFRESH_NOW
     if bot_permissions(ctx):
         if role_list_helper(ctx.guild) in ctx.author.roles:
-            REFRESH_NOW = ctx.channel
-            await response_message(ctx, response='Refreshing now...', message_reaction='success')
+            if not REFRESH_NOW:
+                REFRESH_NOW = ctx.channel
+                await response_message(ctx, response='Refreshing now...', message_reaction='success')
+            else:
+                await response_message(ctx, response='Already refreshing!', message_reaction='failed')
         else:
             await response_message(ctx, response='You are not on the Demon List staff!', message_reaction='failed')
     else:
