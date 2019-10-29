@@ -835,11 +835,11 @@ async def roles_refresh():
                 await REFRESH_NOW.send('Refresh finished!\n__Added__: ' + str(refresh_roles_added) + '\n__Removed__: '
                                        + str(refresh_roles_removed))
             REFRESH_NOW = None
-            if not master_refresh:
-                await asyncio.sleep(60)
-            else:
-                master_refresh = False
-                await asyncio.sleep(10)
+        if not master_refresh:
+            await asyncio.sleep(60)
+        else:
+            master_refresh = False
+            await asyncio.sleep(10)
 
 
 # Specific Discord Demons List methods
