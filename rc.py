@@ -853,7 +853,9 @@ async def roles_refresh():
         elif REFRESH_NOW:
             REFRESH_NOW = None
             master_refresh = False
-            await asyncio.sleep(10)
+            await asyncio.sleep(60)
+        else:
+            await asyncio.sleep(60)
 
 
 def linked_by_did(user: discord.Member):
@@ -890,34 +892,65 @@ def guild_ps() -> discord.Guild:
     return client.get_guild(395654171422097420)
 
 
-def role_list_helper(g: discord.Guild):
-    helper = {633023820206309416: 633025317455527962,
-              395654171422097420: 395664123716829194,
-              162862229065039872: 254769445723963393}
-    try:
-        return get_role(g, str(helper[g.id]))
-    except KeyError:
-        return
+def channel_feedback() -> discord.TextChannel:
+    return guild_hq().get_channel(507344865516978186)
 
 
-def role_list_moderator(g: discord.Guild):
-    moderator = {633023820206309416: 633025213440983041,
-                 395654171422097420: 395663789598703619,
-                 162862229065039872: 365519088832872468}
-    try:
-        return get_role(g, str(moderator[g.id]))
-    except KeyError:
-        return
+def role_list_helper(author_id: int):
+    helper_roles = [get_role(guild_pros(), '633025317455527962'),
+                    get_role(guild_ps(), '395664123716829194'),
+                    get_role(guild_hq(), '254769445723963393')]
+    mem_pros = guild_pros().get_member(author_id)
+    if mem_pros:
+        if [role for role in helper_roles if role in mem_pros.roles]:
+            return True
+    mem_ps = guild_ps().get_member(author_id)
+    if mem_ps:
+        if [role for role in helper_roles if role in mem_ps.roles]:
+            return True
+    mem_hq = guild_hq().get_member(author_id)
+    if mem_hq:
+        if [role for role in helper_roles if role in mem_hq.roles]:
+            return True
+    return False
 
 
-def role_list_leader(g: discord.Guild):
-    leader = {633023820206309416: 633024750024917003,
-              395654171422097420: 395663660233785345,
-              162862229065039872: 215857332863762432}
-    try:
-        return get_role(g, str(leader[g.id]))
-    except KeyError:
-        return
+def role_list_moderator(author_id: int):
+    moderator_roles = [get_role(guild_pros(), '633025213440983041'),
+                       get_role(guild_ps(), '395663789598703619'),
+                       get_role(guild_hq(), '365519088832872468')]
+    mem_pros = guild_pros().get_member(author_id)
+    if mem_pros:
+        if [role for role in moderator_roles if role in mem_pros.roles]:
+            return True
+    mem_ps = guild_ps().get_member(author_id)
+    if mem_ps:
+        if [role for role in moderator_roles if role in mem_ps.roles]:
+            return True
+    mem_hq = guild_hq().get_member(author_id)
+    if mem_hq:
+        if [role for role in moderator_roles if role in mem_hq.roles]:
+            return True
+    return False
+
+
+def role_list_leader(author_id: int):
+    leader_roles = [get_role(guild_pros(), '633024750024917003'),
+                    get_role(guild_ps(), '395663660233785345'),
+                    get_role(guild_hq(), '215857332863762432')]
+    mem_pros = guild_pros().get_member(author_id)
+    if mem_pros:
+        if [role for role in leader_roles if role in mem_pros.roles]:
+            return True
+    mem_ps = guild_ps().get_member(author_id)
+    if mem_ps:
+        if [role for role in leader_roles if role in mem_ps.roles]:
+            return True
+    mem_hq = guild_hq().get_member(author_id)
+    if mem_hq:
+        if [role for role in leader_roles if role in mem_hq.roles]:
+            return True
+    return False
 
 
 @client.event
@@ -940,8 +973,8 @@ async def on_ready():
 
 @client.event
 async def on_member_join(member: discord.Member):
-    print('[on_member_join] User \"' + member.name + '\" joining...')
     if member.guild == guild_pros():
+        print('[on_member_join] PROS | User \"' + member.name + '\" joining...')
         allowed = False
         player = PLAYER_LIST.player_by_member(member)
         if not player:
@@ -959,10 +992,9 @@ async def on_member_join(member: discord.Member):
                                   pc_role.d_role.name + '\" to \"' + member.name + '\"')
             if allowed:
                 print('[on_member_join] Player meets requirements for PC Role: ACCEPTED')
-            if guild_hq().get_member(member.id):
+            if role_list_helper(member.id):  # Check List staff
                 print('[on_member_join] Player is List Staff: ACCEPTED')
-                if role_list_helper(guild_hq()) in guild_hq().get_member(member.id).roles:  # Check List staff
-                    allowed = True
+                allowed = True
         with open(file=FILE_WHITELIST, mode='r') as infile:  # Check Whitelist exempts
             exempts = [line.strip().replace('\n', '') for line in infile]
             if str(member.id) in exempts:
@@ -999,10 +1031,9 @@ async def on_message(message: discord.Message):
                                 if pc_role.meets_requirements(player):
                                     allowed = True
                                     break
-                        if guild_hq().get_member(message.author.id):
-                            if role_list_helper(guild_hq()) in guild_hq().get_member(message.author.id).roles:
-                                # Check List staff
-                                allowed = True
+                        if role_list_helper(message.author.id):
+                            # Check List staff
+                            allowed = True
                     else:  # Check Whitelist exempts
                         with open(file=FILE_WHITELIST, mode='r') as infile:
                             exempts = [line.strip().replace('\n', '') for line in infile]
@@ -1073,7 +1104,7 @@ async def super_refresh_now(ctx):
 async def refresh_now(ctx):
     global REFRESH_NOW
     if bot_permissions(ctx):
-        if role_list_helper(ctx.guild) in ctx.author.roles:
+        if role_list_helper(ctx.author.id):
             if not REFRESH_NOW:
                 REFRESH_NOW = ctx.channel
                 await response_message(ctx, response='Refreshing now...', message_reaction='success')
@@ -1089,7 +1120,7 @@ async def refresh_now(ctx):
 async def rc_role(ctx, rc_type, i_role, rc_role_type=None, rc_role_params=None):
     # rc_role add|remove i_role points|demons|positional|counter parameters
     if bot_permissions(ctx):
-        if role_list_helper(ctx.guild) in ctx.author.roles:
+        if role_list_helper(ctx.author.id):
             use_role = i_role.replace('_', ' ')
             set_role = get_role(gr_guild=ctx.guild, gr_i=use_role)
             if set_role:
@@ -1101,13 +1132,13 @@ async def rc_role(ctx, rc_type, i_role, rc_role_type=None, rc_role_params=None):
                             if not is_number(rc_role_params):
                                 rc_conditions = False
                             else:
-                                rc_points = int(rc_role_params)
+                                rc_points = int(rc_role_params.replace('\"', ''))
                                 rc_role_data = rc_points
                         elif rc_role_type.lower() == 'demons':
                             if is_number(rc_role_params):
                                 rc_conditions = False
                             else:
-                                rc_demons = rc_role_params.replace(" ", "").split(",")
+                                rc_demons = rc_role_params.replace("_", " ").replace('\"', '').split(",")
                                 rc_demons_l = []
                                 for d in rc_demons:
                                     for ld in DEMON_LIST.ls:
@@ -1118,10 +1149,10 @@ async def rc_role(ctx, rc_type, i_role, rc_role_type=None, rc_role_params=None):
                                 else:
                                     rc_role_data = rc_demons_l
                         elif rc_role_type.lower() in ['positional', 'pos']:  # base,range,count
-                            if is_number(rc_role_params):
+                            if is_number(rc_role_params.replace('\"', '')):
                                 rc_conditions = False
                             else:
-                                rc_pos = rc_role_params.split(",")
+                                rc_pos = rc_role_params.replace('\"', '').split(",")
                                 if len(rc_pos) != 3:
                                     rc_conditions = False
                                 else:
@@ -1139,10 +1170,10 @@ async def rc_role(ctx, rc_type, i_role, rc_role_type=None, rc_role_params=None):
                                         rc_count = rc_pos[2]
                                         rc_role_data = [rc_pos_base, rc_pos_range, rc_count]
                         elif rc_role_type.lower() == 'counter':  # type,count
-                            if is_number(rc_role_params):
+                            if is_number(rc_role_params.replace('\"', '')):
                                 rc_conditions = False
                             else:
-                                rc_counter = rc_role_params.split(",")
+                                rc_counter = rc_role_params.replace('\"', '').split(",")
                                 if len(rc_counter) != 2:
                                     rc_conditions = False
                                 else:
@@ -1214,14 +1245,15 @@ async def rc_list(ctx):
     rc_embed = discord.Embed(title='Listing all RC Roles', description=ctx.guild.name,
                              color=member_self(ctx.guild).color)
     for pc_role in ROLE_LIST.ls:
-        rc_embed.add_field(name=pc_role.d_role.name, value='<@&' + str(pc_role.d_role.id) + '> : ' +
-                                                           pc_role.str_requirements(), inline=False)
+        if pc_role.d_role in ctx.guild.roles:
+            rc_embed.add_field(name=pc_role.d_role.name, value='<@&' + str(pc_role.d_role.id) + '> : ' +
+                                                               pc_role.str_requirements(), inline=False)
     await ctx.channel.send(embed=rc_embed)
 
 
 @client.command(pass_context=True)
 async def player_link(ctx, i_user, i_pid):
-    if role_list_helper(ctx.guild) in ctx.author.roles:
+    if role_list_helper(ctx.author.id):
         use_user = search_member(gr_guild=ctx.guild, gr_i=i_user)
         if use_user:
             player = pc_player(i_pid)
@@ -1247,7 +1279,7 @@ async def player_link(ctx, i_user, i_pid):
 
 @client.command(pass_context=True)
 async def player_unlink(ctx, i_user):
-    if role_list_helper(ctx.guild) in ctx.author.roles:
+    if role_list_helper(ctx.author.id):
         use_user = search_member(gr_guild=ctx.guild, gr_i=i_user)
         if use_user:
             player_obj = PLAYER_LIST.player_by_member(use_user)
@@ -1266,7 +1298,7 @@ async def player_unlink(ctx, i_user):
 @client.command(pass_context=True)
 async def rc_whitelist(ctx, i_role):
     if bot_permissions(ctx):
-        if role_list_leader(ctx.guild) in ctx.author.roles:
+        if role_list_leader(ctx.author.id):
             use_role = i_role.replace('_', ' ')
             set_role = get_role(gr_guild=ctx.guild, gr_i=use_role)
             if set_role:
@@ -1292,7 +1324,7 @@ async def rc_whitelist(ctx, i_role):
 @client.command(pass_context=True)
 async def exempt_whitelist(ctx, i_user):
     if bot_permissions(ctx):
-        if role_list_moderator(ctx.guild) in ctx.author.roles:
+        if role_list_moderator(ctx.author.id):
             if is_number(i_user):
                 whs_added = True
                 with open(file=FILE_WHITELIST, mode='r') as infile:
@@ -1324,78 +1356,158 @@ async def exempt_whitelist(ctx, i_user):
 
 @client.command(pass_context=True)
 async def rc_player(ctx, i_user):
-    if role_list_helper(ctx.guild) in ctx.author.roles:
-        use_user = search_member(gr_guild=ctx.guild, gr_i=i_user)
-        if use_user:
-            player = pc_player(linked_by_did(use_user))
-            if player:
-                player_obj = pc_to_obj(i_dic=player, obj_type='player')
-                if player_obj:
-                    await response_message(ctx, response='Showing data for ' + use_user.display_name + ':',
-                                           message_reaction='success')
-                    p_m = '__Name__: ' + player_obj.name + '\n'
-                    p_m += '__PID__: ' + str(player_obj.pid) + '\n'
-                    p_m += '__Points__: ' + str(player_obj.points) + '\n'
-                    m_records = ''
-                    m_progress = ''
-                    if player_obj.records:
-                        for record in player_obj.records:
-                            m_s = ''
-                            if record.demon.position >= 151:
-                                m_s = '*'
-                            elif record.demon.position <= 75:
-                                m_s = '**'
-                            if record.progress == 100:
-                                m_records += m_s + record.demon.name + m_s + ', '
-                            else:
-                                m_progress += m_s + record.demon.name + m_s + '(' + str(record.progress) + '%), '
-                        m_records = m_records[:-2]
-                        m_progress = m_progress[:-2]
-                    m_verified = ''
-                    if player_obj.verified:
-                        for verified in player_obj.verified:
-                            m_s = ''
-                            if verified.position >= 151:
-                                m_s = '*'
-                            elif verified.position <= 75:
-                                m_s = '**'
-                            m_verified += m_s + verified.name + m_s + ', '
-                        m_verified = m_verified[:-2]
-                    m_published = ''
-                    if player_obj.published:
-                        for published in player_obj.published:
-                            m_s = ''
-                            if published.position >= 151:
-                                m_s = '*'
-                            elif published.position <= 75:
-                                m_s = '**'
-                            m_published += m_s + published.name + m_s + ', '
-                        m_published = m_published[:-2]
-                    m_created = ''
-                    if player_obj.created:
-                        for created in player_obj.created:
-                            m_s = ''
-                            if created.position >= 151:
-                                m_s = '*'
-                            elif created.position <= 75:
-                                m_s = '**'
-                            m_created += m_s + created.name + m_s + ', '
-                        m_created = m_created[:-2]
-                    p_m += '__Records__: ' + m_records + '\n'
-                    p_m_2 = '__Verified__: ' + m_verified + '\n'
-                    p_m_2 += '__Published__: ' + m_published + '\n'
-                    p_m_2 += '__Created In__: ' + m_created + '\n'
-                    p_m_2 += '__Progress On__: ' + m_progress
-                    await ctx.channel.send(p_m)
-                    await ctx.channel.send(p_m_2)
-                else:
-                    await response_message(ctx, response='Invalid player!', message_reaction='failed')
+    use_user = search_member(gr_guild=ctx.guild, gr_i=i_user)
+    if use_user:
+        player = pc_player(linked_by_did(use_user))
+        if player:
+            player_obj = pc_to_obj(i_dic=player, obj_type='player')
+            if player_obj:
+                await response_message(ctx, response='Showing data for ' + use_user.display_name + ':',
+                                       message_reaction='success')
+                p_m = '__Name__: ' + player_obj.name + '\n'
+                p_m += '__PID__: ' + str(player_obj.pid) + '\n'
+                p_m += '__Points__: ' + str(player_obj.points) + '\n'
+                m_records = ''
+                m_progress = ''
+                if player_obj.records:
+                    for record in player_obj.records:
+                        m_s = ''
+                        if record.demon.position >= 151:
+                            m_s = '*'
+                        elif record.demon.position <= 75:
+                            m_s = '**'
+                        if record.progress == 100:
+                            m_records += m_s + record.demon.name + m_s + ', '
+                        else:
+                            m_progress += m_s + record.demon.name + m_s + '(' + str(record.progress) + '%), '
+                    m_records = m_records[:-2]
+                    m_progress = m_progress[:-2]
+                m_verified = ''
+                if player_obj.verified:
+                    for verified in player_obj.verified:
+                        m_s = ''
+                        if verified.position >= 151:
+                            m_s = '*'
+                        elif verified.position <= 75:
+                            m_s = '**'
+                        m_verified += m_s + verified.name + m_s + ', '
+                    m_verified = m_verified[:-2]
+                m_published = ''
+                if player_obj.published:
+                    for published in player_obj.published:
+                        m_s = ''
+                        if published.position >= 151:
+                            m_s = '*'
+                        elif published.position <= 75:
+                            m_s = '**'
+                        m_published += m_s + published.name + m_s + ', '
+                    m_published = m_published[:-2]
+                m_created = ''
+                if player_obj.created:
+                    for created in player_obj.created:
+                        m_s = ''
+                        if created.position >= 151:
+                            m_s = '*'
+                        elif created.position <= 75:
+                            m_s = '**'
+                        m_created += m_s + created.name + m_s + ', '
+                    m_created = m_created[:-2]
+                p_m += '__Records__: ' + m_records + '\n'
+                p_m_2 = '__Verified__: ' + m_verified + '\n'
+                p_m_2 += '__Published__: ' + m_published + '\n'
+                p_m_2 += '__Created In__: ' + m_created + '\n'
+                p_m_2 += '__Progress On__: ' + m_progress
+                await ctx.channel.send(p_m)
+                await ctx.channel.send(p_m_2)
             else:
                 await response_message(ctx, response='Invalid player!', message_reaction='failed')
         else:
-            await response_message(ctx, response='Invalid user!', message_reaction='failed')
+            await response_message(ctx, response='Invalid player!', message_reaction='failed')
     else:
-        await response_message(ctx, response='You are not on the Demon List staff!', message_reaction='failed')
+        await response_message(ctx, response='Invalid user!', message_reaction='failed')
+
+
+@client.command(pass_context=True)
+async def suggestion(ctx, s_type, s_param, s_description):
+    if s_type.replace('\"', '').lower() in ['organization', 'new', 'placement']:
+        param_found = 1
+        """
+        :parameter param_found (int)
+        - 0: Found
+        - 1: Not Found (Invalid Parameters)
+        - 2: Not Found (Invalid Demon for type_check 'placement')
+        - 3: Not Found (Player has not beaten/verified param_check Demon for type_check 'placement')
+        - 4: Not Found (Invalid Player for type_check 'placement')
+        """
+        param_check = s_param.replace('\"', '').lower()
+        type_check = s_type.replace('\"', '').lower()
+        param_demon = None
+        param_player = None
+        if type_check == 'organization' and param_check in ['website', 'dlp']:
+            param_found = 0
+        elif type_check == 'new' and len(param_check.strip()) != 0:
+            param_found = 0
+        elif type_check == 'placement':
+            param_player = pc_player(linked_by_did(ctx.author))
+            if not param_player:
+                param_found = 4
+            else:
+                param_demon = None
+                for pc_demon in DEMON_LIST.ls:
+                    if pc_demon.name.lower() == param_check:
+                        param_demon = pc_demon
+                        break
+                if not param_demon:
+                    param_found = 2
+                else:
+                    param_completed = False
+                    for record in param_player['records']:
+                        if record['demon']['name'] == param_demon.name and record['progress'] == 100:
+                            param_completed = True
+                            break
+                    if param_player['verified']:
+                        for verified in param_player['verified']:
+                            if verified['name'] == param_demon.name:
+                                param_completed = True
+                                break
+                    if not param_completed:
+                        param_found = 3
+                    else:
+                        param_found = 0
+        if param_found == 0:
+            desc_check = s_description.replace('\"', '')
+            if len(desc_check) > 0:
+                s_message = '**New Suggestion from:** *' + ctx.author.name + '#' + ctx.author.discriminator + \
+                            '* (' + ctx.guild.name + ')\n'
+                s_message += '__Type:__ ' + {'organization': 'Organization',
+                                             'new': 'To Be Placed Level',
+                                             'placement': 'Placement Opinion'}[type_check] + '\n'
+                s_m_param = ''
+                if type_check == 'organization':
+                    s_m_param = {'website': 'Website', 'dlp': 'Demon List Public Server'}[param_check]
+                elif type_check == 'new':
+                    s_m_param = s_param.replace('\"', '')
+                elif type_check == 'placement':
+                    s_m_param = param_demon.name + ' | Position: ' + \
+                                str(param_demon.position)
+                s_message += '__Parameter:__ ' + s_m_param + '\n'
+                if type_check == 'placement':
+                    s_message += '__Player Data:__ ' + param_player['name'] + ' (PID: ' +\
+                                 str(linked_by_did(ctx.author)) + ') | Records: ' + \
+                                 str(len(param_player['records'])) + ' Verified: ' + str(len(param_player['verified']))\
+                                 + ' Published: ' + str(len(param_player['published'])) + ' Created: ' + \
+                                 str(len(param_player['created'])) + '\n'
+                s_message += '__Message:__ ' + desc_check
+                await channel_feedback().send(s_message)
+                await response_message(ctx, response='Feedback sent!', message_reaction='success')
+            else:
+                await response_message(ctx, response='Invalid description!', message_reaction='failed')
+        else:
+            param_not_found = {1: 'Invalid parameters!', 2: 'Invalid demon!', 3: 'You have not beaten this Demon!',
+                               4: 'You are not linked to a valid Player!'}
+            await response_message(ctx, response=param_not_found[param_found], message_reaction='failed')
+    else:
+        await response_message(ctx, response='Invalid suggestion type!', message_reaction='failed')
 
 
 client.loop.create_task(roles_refresh())
