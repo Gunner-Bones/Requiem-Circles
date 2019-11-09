@@ -355,7 +355,14 @@ class PCList(object):
             self.ls.append(use_obj)
         else:
             if change_obj != use_obj:
-                self.ls[self.ls.index(change_obj)] = use_obj
+                if self.list_type == 'player':
+                    self.ls[self.ls.index(change_obj)].records = use_obj.records
+                    self.ls[self.ls.index(change_obj)].verified = use_obj.verified
+                    self.ls[self.ls.index(change_obj)].published = use_obj.published
+                    self.ls[self.ls.index(change_obj)].created = use_obj.created
+                    self.ls[self.ls.index(change_obj)].name = use_obj.name
+                else:
+                    self.ls[self.ls.index(change_obj)] = use_obj
         self.positional_sort()
 
     def remove_object(self, i_obj):
@@ -818,7 +825,12 @@ async def roles_refresh():
             # PC Roles
             refresh_roles_added = 0
             refresh_roles_removed = 0
-            for guild in client.guilds:
+            if REFRESH_NOW:
+                r_guild = [REFRESH_NOW.guild]
+            else:
+                r_guild = client.guilds
+            for guild in r_guild:
+                # print('[roles_refresh] Guild: ' + guild.name)
                 for member in guild.members:
                     player = PLAYER_LIST.player_by_member(member=member)
                     if player:
@@ -854,7 +866,7 @@ async def roles_refresh():
             REFRESH_NOW = None
             master_refresh = False
             await asyncio.sleep(60)
-        else:
+        elif datetime.datetime.now().minute == 00:
             await asyncio.sleep(60)
 
 

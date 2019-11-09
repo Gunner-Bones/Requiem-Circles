@@ -1,2 +1,2 @@
-test = [1, 2]
-print(test[2])
+import time
+print(time.time())
